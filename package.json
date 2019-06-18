@@ -1,0 +1,19 @@
+{
+  "name": "swagger-hx-codegen",
+  "version": "1.0.0",
+  "description": "",
+  "main": "cmd.js",
+  "scripts": {
+    "test": "haxe build.hxml && node cmd.js -swagger swagger.json -className Api"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/damoebius/swagger-hx-codegen.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/damoebius/swagger-hx-codegen/issues"
+  },
+  "homepage": "https://github.com/damoebius/swagger-hx-codegen#readme"
+}

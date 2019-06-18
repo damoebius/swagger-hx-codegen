@@ -1,0 +1,5 @@
+-cp src
+-lib tink_cli
+-lib hxnodejs
+-main GenCli
+-js cmd.js
