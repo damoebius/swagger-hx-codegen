@@ -11,8 +11,8 @@ interface Swagger extends Spec {
     @:optional public var definitions:Dynamic;
     @:optional public var parameters:Dynamic;
     @:optional public var responses:Dynamic;
-    @:optional public var security:Array<Dynamic>;
-    @:optional public var securityDefinitions:Dynamic;
+    @:optional public var security:Array<Security>;
+    @:optional public var securityDefinitions:Dynamic<Security>;
 }
 
 interface Spec {

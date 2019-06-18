@@ -12,13 +12,80 @@ var EReg = function(r,opt) {
 };
 EReg.__name__ = true;
 EReg.prototype = {
-	match: function(s) {
+	r: null
+	,match: function(s) {
 		if(this.r.global) {
 			this.r.lastIndex = 0;
 		}
 		this.r.m = this.r.exec(s);
 		this.r.s = s;
 		return this.r.m != null;
+	}
+	,matched: function(n) {
+		if(this.r.m != null && n >= 0 && n < this.r.m.length) {
+			return this.r.m[n];
+		} else {
+			throw new js__$Boot_HaxeError("EReg::matched");
+		}
+	}
+	,matchedPos: function() {
+		if(this.r.m == null) {
+			throw new js__$Boot_HaxeError("No string matched");
+		}
+		return { pos : this.r.m.index, len : this.r.m[0].length};
+	}
+	,matchSub: function(s,pos,len) {
+		if(len == null) {
+			len = -1;
+		}
+		if(this.r.global) {
+			this.r.lastIndex = pos;
+			this.r.m = this.r.exec(len < 0 ? s : HxOverrides.substr(s,0,pos + len));
+			var b = this.r.m != null;
+			if(b) {
+				this.r.s = s;
+			}
+			return b;
+		} else {
+			var b1 = this.match(len < 0 ? HxOverrides.substr(s,pos,null) : HxOverrides.substr(s,pos,len));
+			if(b1) {
+				this.r.s = s;
+				this.r.m.index += pos;
+			}
+			return b1;
+		}
+	}
+	,split: function(s) {
+		var d = "#__delim__#";
+		return s.replace(this.r,d).split(d);
+	}
+	,map: function(s,f) {
+		var offset = 0;
+		var buf_b = "";
+		while(true) {
+			if(offset >= s.length) {
+				break;
+			} else if(!this.matchSub(s,offset)) {
+				buf_b += Std.string(HxOverrides.substr(s,offset,null));
+				break;
+			}
+			var p = this.matchedPos();
+			buf_b += Std.string(HxOverrides.substr(s,offset,p.pos - offset));
+			buf_b += Std.string(f(this));
+			if(p.len == 0) {
+				buf_b += Std.string(HxOverrides.substr(s,p.pos,1));
+				offset = p.pos + 1;
+			} else {
+				offset = p.pos + p.len;
+			}
+			if(!this.r.global) {
+				break;
+			}
+		}
+		if(!this.r.global && offset > 0 && offset < s.length) {
+			buf_b += Std.string(HxOverrides.substr(s,offset,null));
+		}
+		return buf_b;
 	}
 	,__class__: EReg
 };
@@ -31,7 +98,10 @@ var Command = function() {
 };
 Command.__name__ = true;
 Command.prototype = {
-	run: function(rest) {
+	swagger: null
+	,help: null
+	,className: null
+	,run: function(rest) {
 		if(this.swagger != null && this.className != null) {
 			var generator = new core_CodeGen();
 			generator.run(this.swagger,this.className);
@@ -79,6 +149,315 @@ HxOverrides.iter = function(a) {
 	}};
 };
 Math.__name__ = true;
+var mustache_Writer = function() {
+	this.cache = new haxe_ds_StringMap();
+};
+mustache_Writer.__name__ = true;
+mustache_Writer.escapeHTML = function(string) {
+	return mustache_Writer.escapeRe.map(string,function(re) {
+		var this1 = mustache_Writer.entityMap;
+		var key = re.matched(0);
+		var _this = this1;
+		if(__map_reserved[key] != null) {
+			return _this.getReserved(key);
+		} else {
+			return _this.h[key];
+		}
+	});
+};
+mustache_Writer.prototype = {
+	cache: null
+	,clearCache: function() {
+		this.cache = new haxe_ds_StringMap();
+	}
+	,parse: function(template,tags) {
+		var _this = this.cache;
+		var tokens = __map_reserved[template] != null ? _this.getReserved(template) : _this.h[template];
+		if(tokens == null) {
+			var this1 = this.cache;
+			var v = mustache_Parser.parse(template,tags);
+			var _this1 = this1;
+			if(__map_reserved[template] != null) {
+				_this1.setReserved(template,v);
+			} else {
+				_this1.h[template] = v;
+			}
+			tokens = v;
+		}
+		return tokens;
+	}
+	,render: function(template,context,partials) {
+		return this.renderTokens(this.parse(template),context,partials,template);
+	}
+	,renderTokens: function(tokens,context,partials,originalTemplate) {
+		var buffer = "";
+		var _g = 0;
+		while(_g < tokens.length) {
+			var token = tokens[_g];
+			++_g;
+			var value;
+			var _g1 = token.type;
+			switch(_g1._hx_index) {
+			case 0:
+				value = token.value;
+				break;
+			case 1:
+				var $escape = _g1.escaped;
+				var value1 = context.lookup(token.value);
+				value = value1 == null ? null : $escape ? mustache_Writer.escapeHTML(Std.string(value1)) : Std.string(value1);
+				break;
+			case 2:
+				var inverted = _g1.inverted;
+				value = inverted ? this.renderInverted(token,context,partials,originalTemplate) : this.renderSection(token,context,partials,originalTemplate);
+				break;
+			case 4:
+				value = this.renderPartial(token,context,partials);
+				break;
+			case 3:case 5:case 6:
+				continue;
+			case 7:
+				value = this.renderPartialOverride(token,context,partials);
+				break;
+			case 8:
+				value = this.renderTokens(this.resolveBlock(token,context).subTokens,context,partials,originalTemplate);
+				break;
+			}
+			if(value != null) {
+				buffer += value;
+			}
+		}
+		return buffer;
+	}
+	,renderSection: function(token,context,partials,originalTemplate) {
+		var _gthis = this;
+		var value = context.lookup(token.value);
+		var _g = Mustache.getSectionValueKind(value);
+		switch(_g._hx_index) {
+		case 0:
+			return null;
+		case 1:
+			var arr = _g.a;
+			var buffer = "";
+			var len = arr.length;
+			var _g1 = 0;
+			var _g11 = len;
+			while(_g1 < _g11) {
+				var i = _g1++;
+				var token1 = token.subTokens;
+				var this1 = new mustache__$Context_ContextImpl(arr[i],context,null);
+				buffer += this.renderTokens(token1,this1,partials,originalTemplate);
+			}
+			return buffer;
+		case 2:
+			var obj = _g.o;
+			var token2 = token.subTokens;
+			var this2 = new mustache__$Context_ContextImpl(obj,context,null);
+			return this.renderTokens(token2,this2,partials,originalTemplate);
+		case 3:
+			return this.renderTokens(token.subTokens,context,partials,originalTemplate);
+		case 4:
+			var f = _g.f;
+			return f(originalTemplate.substring(token.endIndex,token.sectionEndIndex),function(template) {
+				var tmp = _gthis.parse(template);
+				return _gthis.renderTokens(tmp,context,partials,template);
+			});
+		}
+	}
+	,renderInverted: function(token,context,partials,originalTemplate) {
+		var value = context.lookup(token.value);
+		if(Mustache.getSectionValueKind(value)._hx_index == 0) {
+			return this.renderTokens(token.subTokens,context,partials,originalTemplate);
+		} else {
+			return null;
+		}
+	}
+	,renderPartial: function(token,context,partials) {
+		if(partials == null) {
+			return null;
+		}
+		var value = partials(token.value);
+		if(value != null) {
+			return this.renderTokens(this.parse(value),context,partials,value);
+		}
+		return null;
+	}
+	,renderPartialOverride: function(token,context,partials) {
+		if(partials == null) {
+			return null;
+		}
+		var value = partials(token.value);
+		if(value == null) {
+			return null;
+		}
+		var tmp = this.parse(value);
+		var this1 = new mustache__$Context_ContextImpl({ },context,token);
+		return this.renderTokens(tmp,this1,partials,value);
+	}
+	,renderBlock: function(token,context,partials,originalTemplate) {
+		return this.renderTokens(this.resolveBlock(token,context).subTokens,context,partials,originalTemplate);
+	}
+	,resolveBlock: function(token,context) {
+		var resultToken = token;
+		while(context != null) {
+			if(context.partialOverride != null) {
+				var _g = 0;
+				var _g1 = context.partialOverride.subTokens;
+				while(_g < _g1.length) {
+					var overrideToken = _g1[_g];
+					++_g;
+					if(overrideToken.type == mustache_TokenType.Block && overrideToken.value == token.value) {
+						resultToken = overrideToken;
+					}
+				}
+			}
+			context = context.parent;
+		}
+		return resultToken;
+	}
+	,__class__: mustache_Writer
+};
+var Mustache = function() { };
+Mustache.__name__ = true;
+Mustache.render = function(template,context,partials) {
+	var _this = Mustache.defaultWriter;
+	return _this.renderTokens(_this.parse(template),context,partials,template);
+};
+Mustache.parse = function(template,tags) {
+	return Mustache.defaultWriter.parse(template,tags);
+};
+Mustache.clearCache = function() {
+	Mustache.defaultWriter.cache = new haxe_ds_StringMap();
+};
+Mustache.getSectionValueKind = function(value) {
+	if(value == null) {
+		return SectionValueKind.KFalsy;
+	}
+	if(typeof(value) == "boolean") {
+		if(value) {
+			return SectionValueKind.KBasic;
+		} else {
+			return SectionValueKind.KFalsy;
+		}
+	}
+	if(typeof(value) == "number") {
+		if(value != 0) {
+			return SectionValueKind.KBasic;
+		} else {
+			return SectionValueKind.KFalsy;
+		}
+	}
+	var value1 = value;
+	var c = String;
+	var str;
+	if(!((value1) instanceof c)) {
+		var o = value1;
+		str = o != null && c.__isInterface__ && js_Boot.__interfLoop(js_Boot.getClass(o),c);
+	} else {
+		str = true;
+	}
+	var str1 = str ? value1 : null;
+	if(str1 != null) {
+		if(str1.length > 0) {
+			return SectionValueKind.KObject(str1);
+		} else {
+			return SectionValueKind.KFalsy;
+		}
+	}
+	var value2 = value;
+	var c1 = Array;
+	var arr;
+	if(!((value2) instanceof c1)) {
+		var o1 = value2;
+		arr = o1 != null && c1.__isInterface__ && js_Boot.__interfLoop(js_Boot.getClass(o1),c1);
+	} else {
+		arr = true;
+	}
+	var arr1 = arr ? value2 : null;
+	if(arr1 != null) {
+		if(arr1.length > 0) {
+			return SectionValueKind.KArray(arr1);
+		} else {
+			return SectionValueKind.KFalsy;
+		}
+	}
+	if(Reflect.isFunction(value)) {
+		return SectionValueKind.KFunction(value);
+	}
+	if(Reflect.isObject(value)) {
+		return SectionValueKind.KObject(value);
+	}
+	return SectionValueKind.KBasic;
+};
+var SectionValueKind = $hxEnums["SectionValueKind"] = { __ename__ : true, __constructs__ : ["KFalsy","KArray","KObject","KBasic","KFunction"]
+	,KFalsy: {_hx_index:0,__enum__:"SectionValueKind",toString:$estr}
+	,KArray: ($_=function(a) { return {_hx_index:1,a:a,__enum__:"SectionValueKind",toString:$estr}; },$_.__params__ = ["a"],$_)
+	,KObject: ($_=function(o) { return {_hx_index:2,o:o,__enum__:"SectionValueKind",toString:$estr}; },$_.__params__ = ["o"],$_)
+	,KBasic: {_hx_index:3,__enum__:"SectionValueKind",toString:$estr}
+	,KFunction: ($_=function(f) { return {_hx_index:4,f:f,__enum__:"SectionValueKind",toString:$estr}; },$_.__params__ = ["f"],$_)
+};
+var Reflect = function() { };
+Reflect.__name__ = true;
+Reflect.field = function(o,field) {
+	try {
+		return o[field];
+	} catch( e ) {
+		var e1 = ((e) instanceof js__$Boot_HaxeError) ? e.val : e;
+		return null;
+	}
+};
+Reflect.getProperty = function(o,field) {
+	var tmp;
+	if(o == null) {
+		return null;
+	} else {
+		var tmp1;
+		if(o.__properties__) {
+			tmp = o.__properties__["get_" + field];
+			tmp1 = tmp;
+		} else {
+			tmp1 = false;
+		}
+		if(tmp1) {
+			return o[tmp]();
+		} else {
+			return o[field];
+		}
+	}
+};
+Reflect.fields = function(o) {
+	var a = [];
+	if(o != null) {
+		var hasOwnProperty = Object.prototype.hasOwnProperty;
+		for( var f in o ) {
+		if(f != "__id__" && f != "hx__closures__" && hasOwnProperty.call(o,f)) {
+			a.push(f);
+		}
+		}
+	}
+	return a;
+};
+Reflect.isFunction = function(f) {
+	if(typeof(f) == "function") {
+		return !(f.__name__ || f.__ename__);
+	} else {
+		return false;
+	}
+};
+Reflect.isObject = function(v) {
+	if(v == null) {
+		return false;
+	}
+	var t = typeof(v);
+	if(!(t == "string" || t == "object" && v.__enum__ == null)) {
+		if(t == "function") {
+			return (v.__name__ || v.__ename__) != null;
+		} else {
+			return false;
+		}
+	} else {
+		return true;
+	}
+};
 var Std = function() { };
 Std.__name__ = true;
 Std.string = function(s) {
@@ -160,7 +539,8 @@ var _$Sys_FileOutput = function(fd) {
 _$Sys_FileOutput.__name__ = true;
 _$Sys_FileOutput.__super__ = haxe_io_Output;
 _$Sys_FileOutput.prototype = $extend(haxe_io_Output.prototype,{
-	writeByte: function(c) {
+	fd: null
+	,writeByte: function(c) {
 		js_node_Fs.writeSync(this.fd,String.fromCodePoint(c));
 	}
 	,writeBytes: function(s,pos,len) {
@@ -216,7 +596,8 @@ var _$Sys_FileInput = function(fd) {
 _$Sys_FileInput.__name__ = true;
 _$Sys_FileInput.__super__ = haxe_io_Input;
 _$Sys_FileInput.prototype = $extend(haxe_io_Input.prototype,{
-	readByte: function() {
+	fd: null
+	,readByte: function() {
 		var buf = new js_node_buffer_Buffer(1);
 		try {
 			js_node_Fs.readSync(this.fd,buf,0,1,null);
@@ -249,155 +630,391 @@ _$Sys_FileInput.prototype = $extend(haxe_io_Input.prototype,{
 	}
 	,__class__: _$Sys_FileInput
 });
+var Type = function() { };
+Type.__name__ = true;
+Type.getInstanceFields = function(c) {
+	var a = [];
+	for(var i in c.prototype) a.push(i);
+	HxOverrides.remove(a,"__class__");
+	HxOverrides.remove(a,"__properties__");
+	return a;
+};
 var core_CodeGen = function() {
 };
 core_CodeGen.__name__ = true;
 core_CodeGen.prototype = {
 	run: function(swaggerPath,className) {
 		var swagger = JSON.parse(js_node_Fs.readFileSync(swaggerPath,{ encoding : "utf8"}));
-		process.stdout.write(Std.string(swagger.swagger));
+		var view = this.getViewForSwagger(swagger,className);
+		process.stdout.write(Std.string(view));
 		process.stdout.write("\n");
+		var templates = process.cwd() + "/src/templates/";
+		var option = new core_Option();
+		option.classTemplate = js_node_Fs.readFileSync(templates + "haxe-class.mustache",{ encoding : "utf8"});
+		option.methodTemplate = js_node_Fs.readFileSync(templates + "haxe-method.mustache",{ encoding : "utf8"});
+		option.typeTemplate = js_node_Fs.readFileSync(templates + "type.mustache",{ encoding : "utf8"});
+		var template = option.classTemplate;
+		var _this = Mustache.defaultWriter;
+		var obj = option;
+		var source = function(name) {
+			return Reflect.field(obj,name);
+		};
+		var source1 = _this.renderTokens(_this.parse(template),view,source,template);
+		js_node_Fs.writeFileSync(className + ".hx",source1);
+	}
+	,getViewForSwagger: function(swagger,className) {
+		var authorizedMethods_0 = "GET";
+		var authorizedMethods_1 = "POST";
+		var authorizedMethods_2 = "PUT";
+		var authorizedMethods_3 = "DELETE";
+		var authorizedMethods_4 = "PATCH";
+		var authorizedMethods_5 = "COPY";
+		var authorizedMethods_6 = "HEAD";
+		var authorizedMethods_7 = "OPTIONS";
+		var authorizedMethods_8 = "LINK";
+		var authorizedMethods_9 = "UNLIK";
+		var authorizedMethods_10 = "PURGE";
+		var authorizedMethods_11 = "LOCK";
+		var authorizedMethods_12 = "UNLOCK";
+		var authorizedMethods_13 = "PROPFIND";
+		var isSecure = swagger.securityDefinitions != null;
+		var domain = "";
+		if(swagger.schemes != null && swagger.schemes.length > 0 && swagger.host != null && swagger.basePath != null) {
+			var ereg_r = new RegExp("/+$","g".split("u").join(""));
+			domain = swagger.schemes[0] + "://" + swagger.host + swagger.basePath.replace(ereg_r,"");
+		}
+		var data = { isNode : false, isES6 : false, description : swagger.info.description, isSecure : isSecure, moduleName : null, className : className, imports : null, domain : domain, methods : [], definitions : []};
+		var paths = Reflect.fields(swagger.paths);
+		var _g = 0;
+		while(_g < paths.length) {
+			var pathName = paths[_g];
+			++_g;
+			var api = Reflect.getProperty(swagger.paths,pathName);
+			var operations = Reflect.fields(api);
+			var _g1 = 0;
+			while(_g1 < operations.length) {
+				var operationName = operations[_g1];
+				++_g1;
+				var op = Reflect.getProperty(api,operationName);
+				var secureTypes = [];
+				if(swagger.securityDefinitions != null || op.security != null) {
+					var mergedSecurity = [].concat(swagger.security).concat(op.security).map(function(security) {
+						return Reflect.fields(security);
+					});
+					if(swagger.securityDefinitions != null) {
+						var securDef = Reflect.fields(swagger.securityDefinitions);
+						var _g2 = 0;
+						while(_g2 < securDef.length) {
+							var sk = securDef[_g2];
+							++_g2;
+							if(mergedSecurity.join(",").indexOf(sk) != -1) {
+								secureTypes.push(Reflect.getProperty(swagger.securityDefinitions,sk).type);
+							}
+						}
+					}
+				}
+			}
+		}
+		return data;
 	}
 	,__class__: core_CodeGen
 };
+var core_Option = function() {
+};
+core_Option.__name__ = true;
+core_Option.prototype = {
+	classTemplate: null
+	,typeTemplate: null
+	,methodTemplate: null
+	,__class__: core_Option
+};
 var core_Spec = function() { };
 core_Spec.__name__ = true;
+core_Spec.__isInterface__ = true;
 core_Spec.prototype = {
-	__class__: core_Spec
+	info: null
+	,tags: null
+	,externalDocs: null
+	,__class__: core_Spec
 };
 var core_Swagger = function() { };
 core_Swagger.__name__ = true;
+core_Swagger.__isInterface__ = true;
 core_Swagger.__interfaces__ = [core_Spec];
 core_Swagger.prototype = {
-	__class__: core_Swagger
+	swagger: null
+	,host: null
+	,basePath: null
+	,schemes: null
+	,consumes: null
+	,produces: null
+	,paths: null
+	,definitions: null
+	,parameters: null
+	,responses: null
+	,security: null
+	,securityDefinitions: null
+	,__class__: core_Swagger
 };
 var core_Path = function() { };
 core_Path.__name__ = true;
+core_Path.__isInterface__ = true;
 core_Path.prototype = {
-	__class__: core_Path
+	get: null
+	,put: null
+	,post: null
+	,'delete': null
+	,options: null
+	,head: null
+	,patch: null
+	,parameters: null
+	,__class__: core_Path
 };
 var core_Operation = function() { };
 core_Operation.__name__ = true;
+core_Operation.__isInterface__ = true;
 core_Operation.prototype = {
-	__class__: core_Operation
+	tags: null
+	,summary: null
+	,description: null
+	,externalDocs: null
+	,operationId: null
+	,consumes: null
+	,produces: null
+	,parameters: null
+	,responses: null
+	,schemes: null
+	,deprecated: null
+	,security: null
+	,__class__: core_Operation
 };
 var core_Response = function() { };
 core_Response.__name__ = true;
+core_Response.__isInterface__ = true;
 core_Response.prototype = {
-	__class__: core_Response
+	description: null
+	,schema: null
+	,headers: null
+	,examples: null
+	,__class__: core_Response
 };
 var core_BaseSchema = function() { };
 core_BaseSchema.__name__ = true;
+core_BaseSchema.__isInterface__ = true;
 core_BaseSchema.prototype = {
-	__class__: core_BaseSchema
+	title: null
+	,description: null
+	,multipleOf: null
+	,maximum: null
+	,exclusiveMaximum: null
+	,minimum: null
+	,exclusiveMinimum: null
+	,maxLength: null
+	,minLength: null
+	,pattern: null
+	,maxItems: null
+	,minItems: null
+	,uniqueItems: null
+	,maxProperties: null
+	,minProperties: null
+	,items: null
+	,__class__: core_BaseSchema
 };
 var core_Schema = function() { };
 core_Schema.__name__ = true;
+core_Schema.__isInterface__ = true;
 core_Schema.__interfaces__ = [core_BaseSchema];
 core_Schema.prototype = {
-	__class__: core_Schema
+	type: null
+	,format: null
+	,allOf: null
+	,additionalProperties: null
+	,properties: null
+	,discriminator: null
+	,readOnly: null
+	,xml: null
+	,externalDocs: null
+	,example: null
+	,required: null
+	,__class__: core_Schema
 };
 var core_Header = function() { };
 core_Header.__name__ = true;
+core_Header.__isInterface__ = true;
 core_Header.__interfaces__ = [core_BaseSchema];
 core_Header.prototype = {
-	__class__: core_Header
+	format: null
+	,type: null
+	,__class__: core_Header
 };
 var core_XML = function() { };
 core_XML.__name__ = true;
+core_XML.__isInterface__ = true;
 core_XML.prototype = {
-	__class__: core_XML
+	type: null
+	,namespace: null
+	,prefix: null
+	,attribute: null
+	,wrapped: null
+	,__class__: core_XML
 };
 var core_Components = function() { };
 core_Components.__name__ = true;
+core_Components.__isInterface__ = true;
 core_Components.prototype = {
-	__class__: core_Components
+	callbacks: null
+	,examples: null
+	,headers: null
+	,links: null
+	,parameters: null
+	,requestBodies: null
+	,responses: null
+	,schemas: null
+	,securitySchemes: null
+	,__class__: core_Components
 };
 var core_Server = function() { };
 core_Server.__name__ = true;
+core_Server.__isInterface__ = true;
 core_Server.prototype = {
-	__class__: core_Server
+	url: null
+	,__class__: core_Server
 };
 var core_Info = function() { };
 core_Info.__name__ = true;
+core_Info.__isInterface__ = true;
 core_Info.prototype = {
-	__class__: core_Info
+	title: null
+	,version: null
+	,description: null
+	,termsOfService: null
+	,contact: null
+	,license: null
+	,__class__: core_Info
 };
 var core_Contact = function() { };
 core_Contact.__name__ = true;
+core_Contact.__isInterface__ = true;
 core_Contact.prototype = {
-	__class__: core_Contact
+	name: null
+	,email: null
+	,url: null
+	,__class__: core_Contact
 };
 var core_License = function() { };
 core_License.__name__ = true;
+core_License.__isInterface__ = true;
 core_License.prototype = {
-	__class__: core_License
+	name: null
+	,url: null
+	,__class__: core_License
 };
 var core_ExternalDocs = function() { };
 core_ExternalDocs.__name__ = true;
+core_ExternalDocs.__isInterface__ = true;
 core_ExternalDocs.prototype = {
-	__class__: core_ExternalDocs
+	url: null
+	,description: null
+	,__class__: core_ExternalDocs
 };
 var core_Tag = function() { };
 core_Tag.__name__ = true;
+core_Tag.__isInterface__ = true;
 core_Tag.prototype = {
-	__class__: core_Tag
+	name: null
+	,description: null
+	,externalDocs: null
+	,__class__: core_Tag
 };
 var core_BaseParameter = function() { };
 core_BaseParameter.__name__ = true;
+core_BaseParameter.__isInterface__ = true;
 core_BaseParameter.__interfaces__ = [core_BaseSchema];
 core_BaseParameter.prototype = {
-	__class__: core_BaseParameter
+	name: null
+	,required: null
+	,description: null
+	,schema: null
+	,type: null
+	,format: null
+	,__class__: core_BaseParameter
 };
 var core_QueryParameter = function() { };
 core_QueryParameter.__name__ = true;
+core_QueryParameter.__isInterface__ = true;
 core_QueryParameter.__interfaces__ = [core_BaseParameter];
 core_QueryParameter.prototype = {
-	__class__: core_QueryParameter
+	allowEmptyValue: null
+	,collectionFormat: null
+	,__class__: core_QueryParameter
 };
 var core_FormDataParameter = function() { };
 core_FormDataParameter.__name__ = true;
+core_FormDataParameter.__isInterface__ = true;
 core_FormDataParameter.__interfaces__ = [core_BaseParameter];
 core_FormDataParameter.prototype = {
-	__class__: core_FormDataParameter
+	collectionFormat: null
+	,__class__: core_FormDataParameter
 };
 var core_Security = function() { };
 core_Security.__name__ = true;
+core_Security.__isInterface__ = true;
 core_Security.prototype = {
-	__class__: core_Security
+	type: null
+	,description: null
+	,__class__: core_Security
 };
 var core_BasicSecurity = function() { };
 core_BasicSecurity.__name__ = true;
+core_BasicSecurity.__isInterface__ = true;
 core_BasicSecurity.__interfaces__ = [core_Security];
 var core_ApiKeySecurity = function() { };
 core_ApiKeySecurity.__name__ = true;
+core_ApiKeySecurity.__isInterface__ = true;
 core_ApiKeySecurity.__interfaces__ = [core_Security];
 core_ApiKeySecurity.prototype = {
-	__class__: core_ApiKeySecurity
+	name: null
+	,__class__: core_ApiKeySecurity
 };
 var core_OAuth2ImplicitSecurity = function() { };
 core_OAuth2ImplicitSecurity.__name__ = true;
+core_OAuth2ImplicitSecurity.__isInterface__ = true;
 core_OAuth2ImplicitSecurity.__interfaces__ = [core_Security];
 core_OAuth2ImplicitSecurity.prototype = {
-	__class__: core_OAuth2ImplicitSecurity
+	flow: null
+	,authorizationUrl: null
+	,__class__: core_OAuth2ImplicitSecurity
 };
 var core_OAuth2PasswordSecurity = function() { };
 core_OAuth2PasswordSecurity.__name__ = true;
+core_OAuth2PasswordSecurity.__isInterface__ = true;
 core_OAuth2PasswordSecurity.__interfaces__ = [core_Security];
 core_OAuth2PasswordSecurity.prototype = {
-	__class__: core_OAuth2PasswordSecurity
+	flow: null
+	,tokenUrl: null
+	,scopes: null
+	,__class__: core_OAuth2PasswordSecurity
 };
 var core_OAuth2ApplicationSecurity = function() { };
 core_OAuth2ApplicationSecurity.__name__ = true;
+core_OAuth2ApplicationSecurity.__isInterface__ = true;
 core_OAuth2ApplicationSecurity.__interfaces__ = [core_Security];
 core_OAuth2ApplicationSecurity.prototype = {
-	__class__: core_OAuth2ApplicationSecurity
+	flow: null
+	,tokenUrl: null
+	,scopes: null
+	,__class__: core_OAuth2ApplicationSecurity
 };
 var core_OAuth2AccessCodeSecurity = function() { };
 core_OAuth2AccessCodeSecurity.__name__ = true;
+core_OAuth2AccessCodeSecurity.__isInterface__ = true;
 core_OAuth2AccessCodeSecurity.__interfaces__ = [core_Security];
 core_OAuth2AccessCodeSecurity.prototype = {
-	__class__: core_OAuth2AccessCodeSecurity
+	flow: null
+	,tokenUrl: null
+	,authorizationUrl: null
+	,scopes: null
+	,__class__: core_OAuth2AccessCodeSecurity
 };
 var haxe_StackItem = $hxEnums["haxe.StackItem"] = { __ename__ : true, __constructs__ : ["CFunction","Module","FilePos","Method","LocalFunction"]
 	,CFunction: {_hx_index:0,__enum__:"haxe.StackItem",toString:$estr}
@@ -408,6 +1025,7 @@ var haxe_StackItem = $hxEnums["haxe.StackItem"] = { __ename__ : true, __construc
 };
 var haxe_IMap = function() { };
 haxe_IMap.__name__ = true;
+haxe_IMap.__isInterface__ = true;
 var haxe_Timer = function(time_ms) {
 	var me = this;
 	this.id = setInterval(function() {
@@ -424,7 +1042,8 @@ haxe_Timer.delay = function(f,time_ms) {
 	return t;
 };
 haxe_Timer.prototype = {
-	stop: function() {
+	id: null
+	,stop: function() {
 		if(this.id == null) {
 			return;
 		}
@@ -445,11 +1064,41 @@ var haxe_ds_ObjectMap = function() {
 haxe_ds_ObjectMap.__name__ = true;
 haxe_ds_ObjectMap.__interfaces__ = [haxe_IMap];
 haxe_ds_ObjectMap.prototype = {
-	__class__: haxe_ds_ObjectMap
+	h: null
+	,__class__: haxe_ds_ObjectMap
 };
 var haxe_ds_Option = $hxEnums["haxe.ds.Option"] = { __ename__ : true, __constructs__ : ["Some","None"]
 	,Some: ($_=function(v) { return {_hx_index:0,v:v,__enum__:"haxe.ds.Option",toString:$estr}; },$_.__params__ = ["v"],$_)
 	,None: {_hx_index:1,__enum__:"haxe.ds.Option",toString:$estr}
+};
+var haxe_ds_StringMap = function() {
+	this.h = { };
+};
+haxe_ds_StringMap.__name__ = true;
+haxe_ds_StringMap.__interfaces__ = [haxe_IMap];
+haxe_ds_StringMap.prototype = {
+	h: null
+	,rh: null
+	,setReserved: function(key,value) {
+		if(this.rh == null) {
+			this.rh = { };
+		}
+		this.rh["$" + key] = value;
+	}
+	,getReserved: function(key) {
+		if(this.rh == null) {
+			return null;
+		} else {
+			return this.rh["$" + key];
+		}
+	}
+	,existsReserved: function(key) {
+		if(this.rh == null) {
+			return false;
+		}
+		return this.rh.hasOwnProperty("$" + key);
+	}
+	,__class__: haxe_ds_StringMap
 };
 var haxe_io_Bytes = function(data) {
 	this.length = data.byteLength;
@@ -505,7 +1154,9 @@ haxe_io_Bytes.ofData = function(b) {
 	return new haxe_io_Bytes(b);
 };
 haxe_io_Bytes.prototype = {
-	blit: function(pos,src,srcpos,len) {
+	length: null
+	,b: null
+	,blit: function(pos,src,srcpos,len) {
 		if(pos < 0 || srcpos < 0 || len < 0 || pos + len > this.length || srcpos + len > src.length) {
 			throw new js__$Boot_HaxeError(haxe_io_Error.OutsideBounds);
 		}
@@ -627,7 +1278,8 @@ js__$Boot_HaxeError.wrap = function(val) {
 };
 js__$Boot_HaxeError.__super__ = Error;
 js__$Boot_HaxeError.prototype = $extend(Error.prototype,{
-	__class__: js__$Boot_HaxeError
+	val: null
+	,__class__: js__$Boot_HaxeError
 });
 var js_Boot = function() { };
 js_Boot.__name__ = true;
@@ -840,6 +1492,394 @@ js_node_buffer__$Buffer_Helper.bytesOfBuffer = function(b) {
 	return o;
 };
 var js_node_stream_PassThrough = require("stream").PassThrough;
+var mustache__$Context_ContextImpl = function(view,parentContext,partialOverride) {
+	this.view = view;
+	var _g = new haxe_ds_StringMap();
+	if(__map_reserved["."] != null) {
+		_g.setReserved(".",view);
+	} else {
+		_g.h["."] = view;
+	}
+	this.cache = _g;
+	this.parent = parentContext;
+	this.partialOverride = partialOverride;
+};
+mustache__$Context_ContextImpl.__name__ = true;
+mustache__$Context_ContextImpl.getField = function(object,name) {
+	var value = Reflect.field(object,name);
+	if(Reflect.isFunction(value)) {
+		return haxe_ds_Option.Some(function() {
+			return value.apply(object,[]);
+		});
+	}
+	if(value != null || Object.prototype.hasOwnProperty.call(object,name)) {
+		return haxe_ds_Option.Some(value);
+	}
+	var o = object;
+	var cl = o == null ? null : js_Boot.getClass(o);
+	if(cl != null && Type.getInstanceFields(cl).indexOf(name) != -1) {
+		return haxe_ds_Option.Some(value);
+	}
+	return haxe_ds_Option.None;
+};
+mustache__$Context_ContextImpl.prototype = {
+	view: null
+	,parent: null
+	,cache: null
+	,partialOverride: null
+	,push: function(view,partialOverride) {
+		var this1 = new mustache__$Context_ContextImpl(view,this,partialOverride);
+		return this1;
+	}
+	,lookup: function(name) {
+		var value = null;
+		var _this = this.cache;
+		if(__map_reserved[name] != null ? _this.existsReserved(name) : _this.h.hasOwnProperty(name)) {
+			var _this1 = this.cache;
+			value = __map_reserved[name] != null ? _this1.getReserved(name) : _this1.h[name];
+		} else {
+			var context = this;
+			while(context != null) {
+				var found = false;
+				if(name.indexOf(".") == -1) {
+					var _g = mustache__$Context_ContextImpl.getField(context.view,name);
+					switch(_g._hx_index) {
+					case 0:
+						var v = _g.v;
+						found = true;
+						value = v;
+						break;
+					case 1:
+						break;
+					}
+				} else {
+					var names = name.split(".");
+					var index = 0;
+					value = context.view;
+					while(value != null && index < names.length) {
+						var _g1 = mustache__$Context_ContextImpl.getField(value,names[index++]);
+						switch(_g1._hx_index) {
+						case 0:
+							var v1 = _g1.v;
+							if(index == names.length - 1) {
+								found = true;
+							}
+							value = v1;
+							break;
+						case 1:
+							value = null;
+							break;
+						}
+					}
+				}
+				if(found) {
+					break;
+				}
+				context = context.parent;
+			}
+			var v2 = value;
+			var _this2 = this.cache;
+			var value1 = v2;
+			if(__map_reserved[name] != null) {
+				_this2.setReserved(name,value1);
+			} else {
+				_this2.h[name] = value1;
+			}
+		}
+		if(Reflect.isFunction(value)) {
+			value = value();
+		}
+		return value;
+	}
+	,__class__: mustache__$Context_ContextImpl
+};
+var mustache_Parser = function() { };
+mustache_Parser.__name__ = true;
+mustache_Parser.parse = function(template,tags) {
+	if(template.length == 0) {
+		return [];
+	}
+	var openingTagRe;
+	var closingTagRe;
+	var closingCurlyRe;
+	var compileTags = function(tags1) {
+		if(tags1.length != 2) {
+			throw new js__$Boot_HaxeError("Invalid tags: " + Std.string(tags1));
+		}
+		openingTagRe = new EReg(mustache_Parser.escapeRegExp(tags1[0]) + "\\s*","");
+		closingTagRe = new EReg("\\s*" + mustache_Parser.escapeRegExp(tags1[1]),"");
+		closingCurlyRe = new EReg("\\s*" + mustache_Parser.escapeRegExp("}" + tags1[1]),"");
+	};
+	compileTags(tags != null ? tags : Mustache.tags);
+	var sections = [];
+	var tokens = [];
+	var spaces = [];
+	var hasTag = false;
+	var nonSpace = false;
+	var scanner = new mustache_Scanner(template);
+	while(scanner.tail != "") {
+		var start = scanner.pos;
+		var value = scanner.scanUntil(openingTagRe);
+		if(value.length > 0) {
+			var _g = 0;
+			var _g1 = value.length;
+			while(_g < _g1) {
+				var i = _g++;
+				var chr = value.charAt(i);
+				if(mustache_Parser.spaceRe.match(chr)) {
+					spaces.push(tokens.length);
+				} else {
+					nonSpace = true;
+				}
+				tokens.push(new mustache_Token(mustache_TokenType.Text,chr,start,start + 1));
+				++start;
+				if(chr == "\n") {
+					if(hasTag && !nonSpace) {
+						var _g2 = 0;
+						while(_g2 < spaces.length) {
+							var idx = spaces[_g2];
+							++_g2;
+							tokens[idx] = null;
+						}
+					}
+					spaces = [];
+					hasTag = false;
+					nonSpace = false;
+				}
+			}
+		}
+		if(scanner.scan(openingTagRe).length == 0) {
+			break;
+		}
+		hasTag = true;
+		var type = scanner.scan(mustache_Parser.tagRe);
+		if(type.length > 0) {
+			scanner.scan(mustache_Parser.whiteRe);
+		}
+		if(type == "=") {
+			value = scanner.scanUntil(mustache_Parser.equalsRe);
+			scanner.scan(mustache_Parser.equalsRe);
+			scanner.scanUntil(closingTagRe);
+		} else if(type == "{") {
+			value = scanner.scanUntil(closingCurlyRe);
+			scanner.scan(mustache_Parser.curlyRe);
+			scanner.scanUntil(closingTagRe);
+			type = "&";
+		} else {
+			value = scanner.scanUntil(closingTagRe);
+		}
+		if(scanner.scan(closingTagRe).length == 0) {
+			throw new js__$Boot_HaxeError("Unclosed tag at " + scanner.pos);
+		}
+		var tokenType;
+		switch(type) {
+		case "":
+			tokenType = mustache_TokenType.Value(true);
+			break;
+		case "!":
+			tokenType = mustache_TokenType.Comment;
+			break;
+		case "#":
+			tokenType = mustache_TokenType.Section(false);
+			break;
+		case "$":
+			tokenType = mustache_TokenType.Block;
+			break;
+		case "&":
+			tokenType = mustache_TokenType.Value(false);
+			break;
+		case "/":
+			tokenType = mustache_TokenType.SectionClose;
+			break;
+		case "<":
+			tokenType = mustache_TokenType.PartialOverride;
+			break;
+		case "=":
+			tokenType = mustache_TokenType.SetDelimiters;
+			break;
+		case ">":
+			tokenType = mustache_TokenType.Partial;
+			break;
+		case "^":
+			tokenType = mustache_TokenType.Section(true);
+			break;
+		default:
+			throw new js__$Boot_HaxeError("unknown token type: " + type);
+		}
+		var token = new mustache_Token(tokenType,value,start,scanner.pos);
+		tokens.push(token);
+		switch(tokenType._hx_index) {
+		case 1:
+			var _g11 = tokenType.escaped;
+			nonSpace = true;
+			break;
+		case 2:
+			var _g3 = tokenType.inverted;
+			sections.push(token);
+			break;
+		case 3:
+			var openSection = sections.pop();
+			if(openSection == null) {
+				throw new js__$Boot_HaxeError("Unopened section \"" + value + "\" at " + start);
+			}
+			if(openSection.value != value) {
+				throw new js__$Boot_HaxeError("Unclosed section \"" + openSection.value + "\" at " + start);
+			}
+			break;
+		case 6:
+			compileTags(mustache_Parser.spaceRe.split(value));
+			break;
+		case 7:case 8:
+			sections.push(token);
+			break;
+		default:
+		}
+	}
+	var openSection1 = sections.pop();
+	if(openSection1 != null) {
+		throw new js__$Boot_HaxeError("Unclosed section \"" + openSection1.value + "\" at " + scanner.pos);
+	}
+	return mustache_Parser.nestTokens(mustache_Parser.squashTokens(tokens));
+};
+mustache_Parser.squashTokens = function(tokens) {
+	var squashedTokens = [];
+	var lastToken = null;
+	var _g = 0;
+	while(_g < tokens.length) {
+		var token = tokens[_g];
+		++_g;
+		if(token != null) {
+			if(token.type == mustache_TokenType.Text && lastToken != null && lastToken.type == mustache_TokenType.Text) {
+				lastToken.value += token.value;
+				lastToken.endIndex = token.endIndex;
+			} else {
+				squashedTokens.push(token);
+				lastToken = token;
+			}
+		}
+	}
+	return squashedTokens;
+};
+mustache_Parser.nestTokens = function(tokens) {
+	var nestedTokens = [];
+	var collector = nestedTokens;
+	var sections = [];
+	var _g = 0;
+	while(_g < tokens.length) {
+		var token = tokens[_g];
+		++_g;
+		var _g1 = token.type;
+		switch(_g1._hx_index) {
+		case 2:
+			var _g11 = _g1.inverted;
+			collector.push(token);
+			sections.push(token);
+			collector = token.subTokens = [];
+			break;
+		case 3:
+			var section = sections.pop();
+			section.sectionEndIndex = token.startIndex;
+			collector = sections.length > 0 ? sections[sections.length - 1].subTokens : nestedTokens;
+			break;
+		case 7:case 8:
+			collector.push(token);
+			sections.push(token);
+			collector = token.subTokens = [];
+			break;
+		default:
+			collector.push(token);
+		}
+	}
+	return nestedTokens;
+};
+mustache_Parser.escapeRegExp = function(string) {
+	return mustache_Parser.escapeRegExpRe.map(string,function(r) {
+		return "\\" + r.matched(0);
+	});
+};
+var mustache__$Partials_Partials_$Impl_$ = {};
+mustache__$Partials_Partials_$Impl_$.__name__ = true;
+mustache__$Partials_Partials_$Impl_$.fromDynamic = function(obj) {
+	return function(name) {
+		return Reflect.field(obj,name);
+	};
+};
+var mustache_Scanner = function(string) {
+	this.string = string;
+	this.tail = string;
+	this.pos = 0;
+};
+mustache_Scanner.__name__ = true;
+mustache_Scanner.prototype = {
+	string: null
+	,tail: null
+	,pos: null
+	,eos: function() {
+		return this.tail == "";
+	}
+	,scan: function(re) {
+		if(!re.match(this.tail)) {
+			return "";
+		}
+		var p = re.matchedPos();
+		if(p.pos != 0) {
+			return "";
+		}
+		this.tail = this.tail.substring(p.len);
+		this.pos += p.len;
+		return re.matched(0);
+	}
+	,scanUntil: function(re) {
+		var match;
+		if(re.match(this.tail)) {
+			var p = re.matchedPos();
+			if(p.pos == 0) {
+				match = "";
+			} else {
+				match = this.tail.substring(0,p.pos);
+				this.tail = this.tail.substring(p.pos);
+			}
+		} else {
+			match = this.tail;
+			this.tail = "";
+		}
+		this.pos += match.length;
+		return match;
+	}
+	,__class__: mustache_Scanner
+};
+var mustache_TokenType = $hxEnums["mustache.TokenType"] = { __ename__ : true, __constructs__ : ["Text","Value","Section","SectionClose","Partial","Comment","SetDelimiters","PartialOverride","Block"]
+	,Text: {_hx_index:0,__enum__:"mustache.TokenType",toString:$estr}
+	,Value: ($_=function(escaped) { return {_hx_index:1,escaped:escaped,__enum__:"mustache.TokenType",toString:$estr}; },$_.__params__ = ["escaped"],$_)
+	,Section: ($_=function(inverted) { return {_hx_index:2,inverted:inverted,__enum__:"mustache.TokenType",toString:$estr}; },$_.__params__ = ["inverted"],$_)
+	,SectionClose: {_hx_index:3,__enum__:"mustache.TokenType",toString:$estr}
+	,Partial: {_hx_index:4,__enum__:"mustache.TokenType",toString:$estr}
+	,Comment: {_hx_index:5,__enum__:"mustache.TokenType",toString:$estr}
+	,SetDelimiters: {_hx_index:6,__enum__:"mustache.TokenType",toString:$estr}
+	,PartialOverride: {_hx_index:7,__enum__:"mustache.TokenType",toString:$estr}
+	,Block: {_hx_index:8,__enum__:"mustache.TokenType",toString:$estr}
+};
+var mustache_Token = function(type,value,startIndex,endIndex,subTokens,sectionEndIndex) {
+	this.type = type;
+	this.value = value;
+	this.startIndex = startIndex;
+	this.endIndex = endIndex;
+	this.subTokens = subTokens;
+	this.sectionEndIndex = sectionEndIndex;
+};
+mustache_Token.__name__ = true;
+mustache_Token.prototype = {
+	type: null
+	,value: null
+	,startIndex: null
+	,endIndex: null
+	,subTokens: null
+	,sectionEndIndex: null
+	,toString: function() {
+		return "Token(" + Std.string(this.type) + ", " + JSON.stringify(this.value) + ", " + this.startIndex + ", " + this.endIndex + ", [" + (this.subTokens != null ? this.subTokens.join(", ") : "") + "], " + this.sectionEndIndex + ")";
+	}
+	,__class__: mustache_Token
+};
 var sys_io_FileInput = function(fd) {
 	this.fd = fd;
 	this.pos = 0;
@@ -847,7 +1887,9 @@ var sys_io_FileInput = function(fd) {
 sys_io_FileInput.__name__ = true;
 sys_io_FileInput.__super__ = haxe_io_Input;
 sys_io_FileInput.prototype = $extend(haxe_io_Input.prototype,{
-	readByte: function() {
+	fd: null
+	,pos: null
+	,readByte: function() {
 		var buf = new js_node_buffer_Buffer(1);
 		var bytesRead;
 		try {
@@ -917,7 +1959,9 @@ var sys_io_FileOutput = function(fd) {
 sys_io_FileOutput.__name__ = true;
 sys_io_FileOutput.__super__ = haxe_io_Output;
 sys_io_FileOutput.prototype = $extend(haxe_io_Output.prototype,{
-	writeByte: function(b) {
+	fd: null
+	,pos: null
+	,writeByte: function(b) {
 		var buf = new js_node_buffer_Buffer(1);
 		buf[0] = b;
 		js_node_Fs.writeSync(this.fd,buf,0,1,this.pos);
@@ -959,7 +2003,8 @@ var sys_io_FileSeek = $hxEnums["sys.io.FileSeek"] = { __ename__ : true, __constr
 var tink_chunk_ChunkBase = function() { };
 tink_chunk_ChunkBase.__name__ = true;
 tink_chunk_ChunkBase.prototype = {
-	getCursor: function() {
+	flattened: null
+	,getCursor: function() {
 		if(this.flattened == null) {
 			this.flatten(this.flattened = []);
 		}
@@ -971,8 +2016,17 @@ tink_chunk_ChunkBase.prototype = {
 };
 var tink_chunk_ChunkObject = function() { };
 tink_chunk_ChunkObject.__name__ = true;
+tink_chunk_ChunkObject.__isInterface__ = true;
 tink_chunk_ChunkObject.prototype = {
-	__class__: tink_chunk_ChunkObject
+	getByte: null
+	,getCursor: null
+	,flatten: null
+	,getLength: null
+	,slice: null
+	,toString: null
+	,toBytes: null
+	,blitTo: null
+	,__class__: tink_chunk_ChunkObject
 };
 var tink__$Chunk_EmptyChunk = function() {
 };
@@ -1009,7 +2063,11 @@ tink__$Chunk_CompoundChunk.__name__ = true;
 tink__$Chunk_CompoundChunk.__interfaces__ = [tink_chunk_ChunkObject];
 tink__$Chunk_CompoundChunk.__super__ = tink_chunk_ChunkBase;
 tink__$Chunk_CompoundChunk.prototype = $extend(tink_chunk_ChunkBase.prototype,{
-	getByte: function(i) {
+	left: null
+	,right: null
+	,split: null
+	,length: null
+	,getByte: function(i) {
 		if(i < this.split) {
 			return this.left.getByte(i);
 		} else {
@@ -1042,6 +2100,7 @@ tink__$Chunk_CompoundChunk.prototype = $extend(tink_chunk_ChunkBase.prototype,{
 });
 var tink__$Chunk_Chunk_$Impl_$ = {};
 tink__$Chunk_Chunk_$Impl_$.__name__ = true;
+tink__$Chunk_Chunk_$Impl_$.__properties__ = {get_length:"get_length"};
 tink__$Chunk_Chunk_$Impl_$.get_length = function(this1) {
 	return this1.getLength();
 };
@@ -1315,7 +2374,11 @@ tink_chunk_ByteChunk.of = function(b) {
 };
 tink_chunk_ByteChunk.__super__ = tink_chunk_ChunkBase;
 tink_chunk_ByteChunk.prototype = $extend(tink_chunk_ChunkBase.prototype,{
-	get_wrapped: function() {
+	data: null
+	,from: null
+	,to: null
+	,wrapped: null
+	,get_wrapped: function() {
 		if(this.wrapped == null) {
 			this.wrapped = haxe_io_Bytes.ofData(this.data);
 		}
@@ -1373,6 +2436,7 @@ tink_chunk_ByteChunk.prototype = $extend(tink_chunk_ChunkBase.prototype,{
 		return this.wrapped.getString(this.from,this.to - this.from);
 	}
 	,__class__: tink_chunk_ByteChunk
+	,__properties__: {get_wrapped:"get_wrapped"}
 });
 var tink_chunk_ChunkCursor = function() {
 	this.currentByte = -1;
@@ -1390,7 +2454,15 @@ tink_chunk_ChunkCursor.create = function(parts) {
 	return ret;
 };
 tink_chunk_ChunkCursor.prototype = {
-	clone: function() {
+	parts: null
+	,curPart: null
+	,curPartIndex: null
+	,curOffset: null
+	,curLength: null
+	,length: null
+	,currentPos: null
+	,currentByte: null
+	,clone: function() {
 		var ret = new tink_chunk_ChunkCursor();
 		ret.parts = this.parts.slice();
 		ret.curPart = this.curPart;
@@ -1652,7 +2724,9 @@ var tink_chunk_ChunkIterator = function(target) {
 };
 tink_chunk_ChunkIterator.__name__ = true;
 tink_chunk_ChunkIterator.prototype = {
-	hasNext: function() {
+	target: null
+	,_hasNext: null
+	,hasNext: function() {
 		return this._hasNext;
 	}
 	,next: function() {
@@ -1664,6 +2738,7 @@ tink_chunk_ChunkIterator.prototype = {
 };
 var tink_chunk__$Seekable_Seekable_$Impl_$ = {};
 tink_chunk__$Seekable_Seekable_$Impl_$.__name__ = true;
+tink_chunk__$Seekable_Seekable_$Impl_$.__properties__ = {get_length:"get_length"};
 tink_chunk__$Seekable_Seekable_$Impl_$._new = function(a) {
 	var this1 = a;
 	return this1;
@@ -1697,7 +2772,8 @@ var tink_chunk_nodejs_BufferChunk = function(buffer) {
 tink_chunk_nodejs_BufferChunk.__name__ = true;
 tink_chunk_nodejs_BufferChunk.__interfaces__ = [tink_chunk_ChunkObject];
 tink_chunk_nodejs_BufferChunk.prototype = {
-	getByte: function(i) {
+	buffer: null
+	,getByte: function(i) {
 		return this.buffer[i];
 	}
 	,getCursor: function() {
@@ -1741,13 +2817,19 @@ tink_chunk_nodejs_BufferChunk.prototype = {
 };
 var tink_cli_DocFormatter = function() { };
 tink_cli_DocFormatter.__name__ = true;
+tink_cli_DocFormatter.__isInterface__ = true;
 tink_cli_DocFormatter.prototype = {
-	__class__: tink_cli_DocFormatter
+	format: null
+	,__class__: tink_cli_DocFormatter
 };
 var tink_cli_Prompt = function() { };
 tink_cli_Prompt.__name__ = true;
+tink_cli_Prompt.__isInterface__ = true;
 tink_cli_Prompt.prototype = {
-	__class__: tink_cli_Prompt
+	print: null
+	,println: null
+	,prompt: null
+	,__class__: tink_cli_Prompt
 };
 var tink_cli__$Prompt_PromptType_$Impl_$ = {};
 tink_cli__$Prompt_PromptType_$Impl_$.__name__ = true;
@@ -1771,7 +2853,10 @@ var tink_cli_Router = function(command,prompt,hasFlags) {
 };
 tink_cli_Router.__name__ = true;
 tink_cli_Router.prototype = {
-	process: function(args) {
+	command: null
+	,prompt: null
+	,hasFlags: null
+	,process: function(args) {
 		return new tink_core__$Future_SyncFuture(new tink_core__$Lazy_LazyConst(tink_core_Outcome.Success(tink_core_Noise.Noise)));
 	}
 	,processArgs: function(args) {
@@ -1890,7 +2975,9 @@ var tink_cli_prompt_IoPrompt = function(source,sink) {
 tink_cli_prompt_IoPrompt.__name__ = true;
 tink_cli_prompt_IoPrompt.__interfaces__ = [tink_cli_Prompt];
 tink_cli_prompt_IoPrompt.prototype = {
-	print: function(v) {
+	source: null
+	,sink: null
+	,print: function(v) {
 		var ret = tink_io__$Source_Source_$Impl_$.pipeTo(new tink_streams_Single(new tink_core__$Lazy_LazyConst(tink_chunk_ByteChunk.of(haxe_io_Bytes.ofString(v)))),this.sink).map(function(r) {
 			if(r._hx_index == 0) {
 				return tink_core_Outcome.Success(tink_core_Noise.Noise);
@@ -1994,7 +3081,9 @@ var tink_cli_prompt_RetryPrompt = function(trials,proxy) {
 tink_cli_prompt_RetryPrompt.__name__ = true;
 tink_cli_prompt_RetryPrompt.__interfaces__ = [tink_cli_Prompt];
 tink_cli_prompt_RetryPrompt.prototype = {
-	print: function(v) {
+	trials: null
+	,proxy: null
+	,print: function(v) {
 		return this.proxy.print(v);
 	}
 	,println: function(v) {
@@ -2054,7 +3143,9 @@ var tink_core_Annex = function(target) {
 };
 tink_core_Annex.__name__ = true;
 tink_core_Annex.prototype = {
-	__class__: tink_core_Annex
+	target: null
+	,registry: null
+	,__class__: tink_core_Annex
 };
 var tink_core__$Callback_Callback_$Impl_$ = {};
 tink_core__$Callback_Callback_$Impl_$.__name__ = true;
@@ -2104,8 +3195,10 @@ tink_core__$Callback_Callback_$Impl_$.defer = function(f) {
 };
 var tink_core__$Callback_LinkObject = function() { };
 tink_core__$Callback_LinkObject.__name__ = true;
+tink_core__$Callback_LinkObject.__isInterface__ = true;
 tink_core__$Callback_LinkObject.prototype = {
-	__class__: tink_core__$Callback_LinkObject
+	cancel: null
+	,__class__: tink_core__$Callback_LinkObject
 };
 var tink_core__$Callback_CallbackLink_$Impl_$ = {};
 tink_core__$Callback_CallbackLink_$Impl_$.__name__ = true;
@@ -2163,7 +3256,8 @@ var tink_core__$Callback_SimpleLink = function(f) {
 tink_core__$Callback_SimpleLink.__name__ = true;
 tink_core__$Callback_SimpleLink.__interfaces__ = [tink_core__$Callback_LinkObject];
 tink_core__$Callback_SimpleLink.prototype = {
-	cancel: function() {
+	f: null
+	,cancel: function() {
 		if(this.f != null) {
 			this.f();
 			this.f = null;
@@ -2179,7 +3273,10 @@ var tink_core__$Callback_LinkPair = function(a,b) {
 tink_core__$Callback_LinkPair.__name__ = true;
 tink_core__$Callback_LinkPair.__interfaces__ = [tink_core__$Callback_LinkObject];
 tink_core__$Callback_LinkPair.prototype = {
-	cancel: function() {
+	a: null
+	,b: null
+	,dissolved: null
+	,cancel: function() {
 		if(!this.dissolved) {
 			this.dissolved = true;
 			var this1 = this.a;
@@ -2206,7 +3303,9 @@ var tink_core__$Callback_ListCell = function(cb,list) {
 tink_core__$Callback_ListCell.__name__ = true;
 tink_core__$Callback_ListCell.__interfaces__ = [tink_core__$Callback_LinkObject];
 tink_core__$Callback_ListCell.prototype = {
-	invoke: function(data) {
+	list: null
+	,cb: null
+	,invoke: function(data) {
 		if(this.cb != null) {
 			tink_core__$Callback_Callback_$Impl_$.invoke(this.cb,data);
 		}
@@ -2227,6 +3326,7 @@ tink_core__$Callback_ListCell.prototype = {
 };
 var tink_core__$Callback_CallbackList_$Impl_$ = {};
 tink_core__$Callback_CallbackList_$Impl_$.__name__ = true;
+tink_core__$Callback_CallbackList_$Impl_$.__properties__ = {get_length:"get_length"};
 tink_core__$Callback_CallbackList_$Impl_$._new = function() {
 	var this1 = [];
 	return this1;
@@ -2329,7 +3429,14 @@ tink_core_TypedError.tryFinally = function(f,cleanup) {
 	return null;
 };
 tink_core_TypedError.prototype = {
-	printPos: function() {
+	message: null
+	,code: null
+	,data: null
+	,pos: null
+	,callStack: null
+	,exceptionStack: null
+	,isTinkError: null
+	,printPos: function() {
 		return this.pos.className + "." + this.pos.methodName + ":" + this.pos.lineNumber;
 	}
 	,toString: function() {
@@ -2352,8 +3459,14 @@ tink_core__$Error_Stack_$Impl_$.toString = function(this1) {
 };
 var tink_core__$Future_FutureObject = function() { };
 tink_core__$Future_FutureObject.__name__ = true;
+tink_core__$Future_FutureObject.__isInterface__ = true;
 tink_core__$Future_FutureObject.prototype = {
-	__class__: tink_core__$Future_FutureObject
+	map: null
+	,flatMap: null
+	,handle: null
+	,gather: null
+	,eager: null
+	,__class__: tink_core__$Future_FutureObject
 };
 var tink_core__$Future_NeverFuture = function() {
 };
@@ -2382,8 +3495,12 @@ var tink_core_Noise = $hxEnums["tink.core.Noise"] = { __ename__ : true, __constr
 };
 var tink_core__$Lazy_LazyObject = function() { };
 tink_core__$Lazy_LazyObject.__name__ = true;
+tink_core__$Lazy_LazyObject.__isInterface__ = true;
 tink_core__$Lazy_LazyObject.prototype = {
-	__class__: tink_core__$Lazy_LazyObject
+	get: null
+	,map: null
+	,flatMap: null
+	,__class__: tink_core__$Lazy_LazyObject
 };
 var tink_core__$Lazy_LazyConst = function(value) {
 	this.value = value;
@@ -2391,7 +3508,8 @@ var tink_core__$Lazy_LazyConst = function(value) {
 tink_core__$Lazy_LazyConst.__name__ = true;
 tink_core__$Lazy_LazyConst.__interfaces__ = [tink_core__$Lazy_LazyObject];
 tink_core__$Lazy_LazyConst.prototype = {
-	get: function() {
+	value: null
+	,get: function() {
 		return this.value;
 	}
 	,map: function(f) {
@@ -2414,7 +3532,8 @@ var tink_core__$Future_SyncFuture = function(value) {
 tink_core__$Future_SyncFuture.__name__ = true;
 tink_core__$Future_SyncFuture.__interfaces__ = [tink_core__$Future_FutureObject];
 tink_core__$Future_SyncFuture.prototype = {
-	map: function(f) {
+	value: null
+	,map: function(f) {
 		return new tink_core__$Future_SyncFuture(this.value.map(f));
 	}
 	,flatMap: function(f) {
@@ -2649,7 +3768,9 @@ var tink_core__$Future_SimpleFuture = function(f) {
 tink_core__$Future_SimpleFuture.__name__ = true;
 tink_core__$Future_SimpleFuture.__interfaces__ = [tink_core__$Future_FutureObject];
 tink_core__$Future_SimpleFuture.prototype = {
-	handle: function(callback) {
+	f: null
+	,gathered: null
+	,handle: function(callback) {
 		return this.f(callback);
 	}
 	,map: function(f) {
@@ -2692,7 +3813,9 @@ var tink_core__$Future_NestedFuture = function(outer) {
 tink_core__$Future_NestedFuture.__name__ = true;
 tink_core__$Future_NestedFuture.__interfaces__ = [tink_core__$Future_FutureObject];
 tink_core__$Future_NestedFuture.prototype = {
-	map: function(f) {
+	outer: null
+	,gathered: null
+	,map: function(f) {
 		var ret = this.outer.flatMap(function(inner) {
 			var ret1 = inner.map(f);
 			return ret1.gather();
@@ -2749,7 +3872,9 @@ tink_core_FutureTrigger.gatherFuture = function(f) {
 	return this1;
 };
 tink_core_FutureTrigger.prototype = {
-	handle: function(callback) {
+	result: null
+	,list: null
+	,handle: function(callback) {
 		var _g = this.list;
 		if(_g == null) {
 			tink_core__$Callback_Callback_$Impl_$.invoke(callback,this.result);
@@ -2816,7 +3941,8 @@ var tink_core__$Future_LazyTrigger = function(op) {
 tink_core__$Future_LazyTrigger.__name__ = true;
 tink_core__$Future_LazyTrigger.__super__ = tink_core_FutureTrigger;
 tink_core__$Future_LazyTrigger.prototype = $extend(tink_core_FutureTrigger.prototype,{
-	eager: function() {
+	op: null
+	,eager: function() {
 		if(this.op != null) {
 			var op = this.op;
 			this.op = null;
@@ -2886,7 +4012,9 @@ var tink_core__$Lazy_LazyFunc = function(f) {
 tink_core__$Lazy_LazyFunc.__name__ = true;
 tink_core__$Lazy_LazyFunc.__interfaces__ = [tink_core__$Lazy_LazyObject];
 tink_core__$Lazy_LazyFunc.prototype = {
-	get: function() {
+	f: null
+	,result: null
+	,get: function() {
 		if(this.f != null) {
 			this.result = this.f();
 			this.f = null;
@@ -2915,7 +4043,9 @@ var tink_core_NamedWith = function(name,value) {
 };
 tink_core_NamedWith.__name__ = true;
 tink_core_NamedWith.prototype = {
-	__class__: tink_core_NamedWith
+	name: null
+	,value: null
+	,__class__: tink_core_NamedWith
 };
 var tink_core_OptionTools = function() { };
 tink_core_OptionTools.__name__ = true;
@@ -3008,7 +4138,9 @@ var tink_core_OptionIter = function(o) {
 };
 tink_core_OptionIter.__name__ = true;
 tink_core_OptionIter.prototype = {
-	hasNext: function() {
+	value: null
+	,alive: null
+	,hasNext: function() {
 		return this.alive;
 	}
 	,next: function() {
@@ -3199,6 +4331,7 @@ tink_core__$Outcome_OutcomeMapper_$Impl_$.withEitherError = function(f) {
 };
 var tink_core__$Pair_Pair_$Impl_$ = {};
 tink_core__$Pair_Pair_$Impl_$.__name__ = true;
+tink_core__$Pair_Pair_$Impl_$.__properties__ = {get_b:"get_b",get_a:"get_a"};
 tink_core__$Pair_Pair_$Impl_$._new = function(a,b) {
 	var this1 = new tink_core_MPair(a,b);
 	return this1;
@@ -3224,7 +4357,9 @@ var tink_core_MPair = function(a,b) {
 };
 tink_core_MPair.__name__ = true;
 tink_core_MPair.prototype = {
-	__class__: tink_core_MPair
+	a: null
+	,b: null
+	,__class__: tink_core_MPair
 };
 var tink_core__$Promise_Promise_$Impl_$ = {};
 tink_core__$Promise_Promise_$Impl_$.__name__ = true;
@@ -3641,6 +4776,7 @@ tink_core__$Promise_PromiseTrigger_$Impl_$.asPromise = function(this1) {
 };
 var tink_core__$Ref_Ref_$Impl_$ = {};
 tink_core__$Ref_Ref_$Impl_$.__name__ = true;
+tink_core__$Ref_Ref_$Impl_$.__properties__ = {set_value:"set_value",get_value:"get_value"};
 tink_core__$Ref_Ref_$Impl_$._new = function() {
 	var this1 = new Array(1);
 	var this2 = this1;
@@ -3841,8 +4977,10 @@ tink_core__$Signal_Signal_$Impl_$.ofClassical = function(add,remove,gather) {
 };
 var tink_core_SignalObject = function() { };
 tink_core_SignalObject.__name__ = true;
+tink_core_SignalObject.__isInterface__ = true;
 tink_core_SignalObject.prototype = {
-	__class__: tink_core_SignalObject
+	handle: null
+	,__class__: tink_core_SignalObject
 };
 var tink_core__$Signal_SimpleSignal = function(f) {
 	this.f = f;
@@ -3850,7 +4988,8 @@ var tink_core__$Signal_SimpleSignal = function(f) {
 tink_core__$Signal_SimpleSignal.__name__ = true;
 tink_core__$Signal_SimpleSignal.__interfaces__ = [tink_core_SignalObject];
 tink_core__$Signal_SimpleSignal.prototype = {
-	handle: function(cb) {
+	f: null
+	,handle: function(cb) {
 		return this.f(cb);
 	}
 	,__class__: tink_core__$Signal_SimpleSignal
@@ -3863,7 +5002,12 @@ var tink_core__$Signal_Suspendable = function(activate) {
 tink_core__$Signal_Suspendable.__name__ = true;
 tink_core__$Signal_Suspendable.__interfaces__ = [tink_core_SignalObject];
 tink_core__$Signal_Suspendable.prototype = {
-	kill: function() {
+	trigger: null
+	,activate: null
+	,suspend: null
+	,check: null
+	,killed: null
+	,kill: function() {
 		if(!this.killed) {
 			this.killed = true;
 			this.trigger = null;
@@ -3894,7 +5038,8 @@ var tink_core_SignalTrigger = function() {
 tink_core_SignalTrigger.__name__ = true;
 tink_core_SignalTrigger.__interfaces__ = [tink_core_SignalObject];
 tink_core_SignalTrigger.prototype = {
-	trigger: function(event) {
+	handlers: null
+	,trigger: function(event) {
 		tink_core__$Callback_CallbackList_$Impl_$.invoke(this.handlers,event);
 	}
 	,getLength: function() {
@@ -3913,6 +5058,7 @@ tink_core_SignalTrigger.prototype = {
 };
 var tink_io__$PipeOptions_PipeOptions_$Impl_$ = {};
 tink_io__$PipeOptions_PipeOptions_$Impl_$.__name__ = true;
+tink_io__$PipeOptions_PipeOptions_$Impl_$.__properties__ = {get_destructive:"get_destructive",get_end:"get_end"};
 tink_io__$PipeOptions_PipeOptions_$Impl_$.get_end = function(this1) {
 	if(this1 != null) {
 		return this1.end;
@@ -3978,8 +5124,12 @@ tink_io_PipeResultTools.toResult = function(c,result,buffered) {
 };
 var tink_io_SinkObject = function() { };
 tink_io_SinkObject.__name__ = true;
+tink_io_SinkObject.__isInterface__ = true;
 tink_io_SinkObject.prototype = {
-	__class__: tink_io_SinkObject
+	get_sealed: null
+	,consume: null
+	,__class__: tink_io_SinkObject
+	,__properties__: {get_sealed:"get_sealed"}
 };
 var tink_io_SinkBase = function() { };
 tink_io_SinkBase.__name__ = true;
@@ -3992,6 +5142,7 @@ tink_io_SinkBase.prototype = {
 		throw new js__$Boot_HaxeError("not implemented");
 	}
 	,__class__: tink_io_SinkBase
+	,__properties__: {get_sealed:"get_sealed"}
 };
 var tink_io__$Sink_Blackhole = function() {
 };
@@ -4083,7 +5234,8 @@ var tink_io__$Sink_FutureSink = function(f) {
 tink_io__$Sink_FutureSink.__name__ = true;
 tink_io__$Sink_FutureSink.__super__ = tink_io_SinkBase;
 tink_io__$Sink_FutureSink.prototype = $extend(tink_io_SinkBase.prototype,{
-	consume: function(source,options) {
+	f: null
+	,consume: function(source,options) {
 		var ret = this.f.flatMap(function(sink) {
 			return sink.consume(source,options);
 		});
@@ -4097,7 +5249,8 @@ var tink_io__$Sink_ErrorSink = function(error) {
 tink_io__$Sink_ErrorSink.__name__ = true;
 tink_io__$Sink_ErrorSink.__super__ = tink_io_SinkBase;
 tink_io__$Sink_ErrorSink.prototype = $extend(tink_io_SinkBase.prototype,{
-	get_sealed: function() {
+	error: null
+	,get_sealed: function() {
 		return false;
 	}
 	,consume: function(source,options) {
@@ -4107,8 +5260,23 @@ tink_io__$Sink_ErrorSink.prototype = $extend(tink_io_SinkBase.prototype,{
 });
 var tink_streams_StreamObject = function() { };
 tink_streams_StreamObject.__name__ = true;
+tink_streams_StreamObject.__isInterface__ = true;
 tink_streams_StreamObject.prototype = {
-	__class__: tink_streams_StreamObject
+	get_depleted: null
+	,next: null
+	,regroup: null
+	,map: null
+	,filter: null
+	,retain: null
+	,idealize: null
+	,append: null
+	,prepend: null
+	,blend: null
+	,decompose: null
+	,forEach: null
+	,reduce: null
+	,__class__: tink_streams_StreamObject
+	,__properties__: {get_depleted:"get_depleted"}
 };
 var tink_streams_StreamBase = function() {
 	this.retainCount = 0;
@@ -4119,6 +5287,7 @@ tink_streams_StreamBase.prototype = {
 	get_depleted: function() {
 		return false;
 	}
+	,retainCount: null
 	,retain: function() {
 		var _gthis = this;
 		this.retainCount++;
@@ -4220,6 +5389,7 @@ tink_streams_StreamBase.prototype = {
 		throw new js__$Boot_HaxeError("not implemented");
 	}
 	,__class__: tink_streams_StreamBase
+	,__properties__: {get_depleted:"get_depleted"}
 };
 var tink_streams_Empty = function() {
 	tink_streams_StreamBase.call(this);
@@ -4243,6 +5413,7 @@ tink_streams_Empty.prototype = $extend(tink_streams_StreamBase.prototype,{
 });
 var tink_io__$Source_Source_$Impl_$ = {};
 tink_io__$Source_Source_$Impl_$.__name__ = true;
+tink_io__$Source_Source_$Impl_$.__properties__ = {get_depleted:"get_depleted"};
 tink_io__$Source_Source_$Impl_$.dirty = function(this1) {
 	return this1;
 };
@@ -4642,8 +5813,11 @@ tink_io__$StreamParser_StreamParser_$Impl_$.parseStream = function(s,p) {
 };
 var tink_io_StreamParserObject = function() { };
 tink_io_StreamParserObject.__name__ = true;
+tink_io_StreamParserObject.__isInterface__ = true;
 tink_io_StreamParserObject.prototype = {
-	__class__: tink_io_StreamParserObject
+	progress: null
+	,eof: null
+	,__class__: tink_io_StreamParserObject
 };
 var tink_io_BytewiseParser = function() { };
 tink_io_BytewiseParser.__name__ = true;
@@ -4694,7 +5868,9 @@ var tink_io_Splitter = function(delim) {
 tink_io_Splitter.__name__ = true;
 tink_io_Splitter.__super__ = tink_io_BytewiseParser;
 tink_io_Splitter.prototype = $extend(tink_io_BytewiseParser.prototype,{
-	read: function(char) {
+	delim: null
+	,buf: null
+	,read: function(char) {
 		if(char == -1) {
 			return tink_io_ParseStep.Done(haxe_ds_Option.None);
 		}
@@ -4730,20 +5906,25 @@ var tink_io_SimpleBytewiseParser = function(f) {
 tink_io_SimpleBytewiseParser.__name__ = true;
 tink_io_SimpleBytewiseParser.__super__ = tink_io_BytewiseParser;
 tink_io_SimpleBytewiseParser.prototype = $extend(tink_io_BytewiseParser.prototype,{
-	read: function(char) {
+	_read: null
+	,read: function(char) {
 		return this._read(char);
 	}
 	,__class__: tink_io_SimpleBytewiseParser
 });
 var tink_io_Transformer = function() { };
 tink_io_Transformer.__name__ = true;
+tink_io_Transformer.__isInterface__ = true;
 tink_io_Transformer.prototype = {
-	__class__: tink_io_Transformer
+	transform: null
+	,__class__: tink_io_Transformer
 };
 var tink_io_WorkerObject = function() { };
 tink_io_WorkerObject.__name__ = true;
+tink_io_WorkerObject.__isInterface__ = true;
 tink_io_WorkerObject.prototype = {
-	__class__: tink_io_WorkerObject
+	work: null
+	,__class__: tink_io_WorkerObject
 };
 var tink_io__$Worker_EagerWorker = function() {
 };
@@ -4780,7 +5961,8 @@ tink_streams_Generator.stream = function(step) {
 };
 tink_streams_Generator.__super__ = tink_streams_StreamBase;
 tink_streams_Generator.prototype = $extend(tink_streams_StreamBase.prototype,{
-	next: function() {
+	upcoming: null
+	,next: function() {
 		return this.upcoming;
 	}
 	,forEach: function(handler) {
@@ -4853,7 +6035,8 @@ tink_io_js_BlobSource.wrap = function(name,blob,chunkSize) {
 };
 tink_io_js_BlobSource.__super__ = tink_streams_Generator;
 tink_io_js_BlobSource.prototype = $extend(tink_streams_Generator.prototype,{
-	__class__: tink_io_js_BlobSource
+	name: null
+	,__class__: tink_io_js_BlobSource
 });
 var tink_io_nodejs_NodejsSink = function(target) {
 	this.target = target;
@@ -4864,7 +6047,8 @@ tink_io_nodejs_NodejsSink.wrap = function(name,native) {
 };
 tink_io_nodejs_NodejsSink.__super__ = tink_io_SinkBase;
 tink_io_nodejs_NodejsSink.prototype = $extend(tink_io_SinkBase.prototype,{
-	consume: function(source,options) {
+	target: null
+	,consume: function(source,options) {
 		var _gthis = this;
 		var ret = source.forEach(tink_streams__$Stream_Handler_$Impl_$.ofUnknown(function(c) {
 			var ret1 = _gthis.target.write(c).map(function(w) {
@@ -4948,7 +6132,11 @@ var tink_io_nodejs_WrappedReadable = function(name,native,chunkSize,onEnd) {
 };
 tink_io_nodejs_WrappedReadable.__name__ = true;
 tink_io_nodejs_WrappedReadable.prototype = {
-	read: function() {
+	native: null
+	,name: null
+	,end: null
+	,chunkSize: null
+	,read: function() {
 		var _gthis = this;
 		return tink_core__$Future_Future_$Impl_$.first(tink_core__$Future_Future_$Impl_$.async(function(cb) {
 			var attempt = null;
@@ -4994,7 +6182,10 @@ var tink_io_nodejs_WrappedWritable = function(name,native) {
 };
 tink_io_nodejs_WrappedWritable.__name__ = true;
 tink_io_nodejs_WrappedWritable.prototype = {
-	end: function() {
+	ended: null
+	,name: null
+	,native: null
+	,end: function() {
 		var didEnd = false;
 		var this1 = this.ended.handle(tink_core__$Callback_Callback_$Impl_$.fromNiladic(function() {
 			didEnd = true;
@@ -5103,7 +6294,10 @@ var tink_io_std_OutputSink = function(name,target,worker) {
 tink_io_std_OutputSink.__name__ = true;
 tink_io_std_OutputSink.__super__ = tink_io_SinkBase;
 tink_io_std_OutputSink.prototype = $extend(tink_io_SinkBase.prototype,{
-	consume: function(source,options) {
+	name: null
+	,target: null
+	,worker: null
+	,consume: function(source,options) {
 		var _gthis = this;
 		var rest = tink__$Chunk_Chunk_$Impl_$.EMPTY;
 		var ret = source.forEach(tink_streams__$Stream_Handler_$Impl_$.ofUnknown(function(c) {
@@ -5244,6 +6438,7 @@ tink_streams__$RealStream_RealStream_$Impl_$.collect = function(this1) {
 };
 var tink_streams__$Stream_Stream_$Impl_$ = {};
 tink_streams__$Stream_Stream_$Impl_$.__name__ = true;
+tink_streams__$Stream_Stream_$Impl_$.__properties__ = {get_depleted:"get_depleted"};
 tink_streams__$Stream_Stream_$Impl_$.get_depleted = function(this1) {
 	return this1.get_depleted();
 };
@@ -5373,7 +6568,8 @@ tink_streams__$Stream_CompoundStream.of = function(streams) {
 };
 tink_streams__$Stream_CompoundStream.__super__ = tink_streams_StreamBase;
 tink_streams__$Stream_CompoundStream.prototype = $extend(tink_streams_StreamBase.prototype,{
-	get_depleted: function() {
+	parts: null
+	,get_depleted: function() {
 		switch(this.parts.length) {
 		case 0:
 			return true;
@@ -5547,7 +6743,9 @@ var tink_streams__$Stream_CloggedStream = function(rest,error) {
 tink_streams__$Stream_CloggedStream.__name__ = true;
 tink_streams__$Stream_CloggedStream.__super__ = tink_streams_StreamBase;
 tink_streams__$Stream_CloggedStream.prototype = $extend(tink_streams_StreamBase.prototype,{
-	next: function() {
+	rest: null
+	,error: null
+	,next: function() {
 		return new tink_core__$Future_SyncFuture(new tink_core__$Lazy_LazyConst(tink_streams_Step.Fail(this.error)));
 	}
 	,forEach: function(handler) {
@@ -5562,7 +6760,8 @@ var tink_streams__$Stream_ErrorStream = function(error) {
 tink_streams__$Stream_ErrorStream.__name__ = true;
 tink_streams__$Stream_ErrorStream.__super__ = tink_streams_StreamBase;
 tink_streams__$Stream_ErrorStream.prototype = $extend(tink_streams_StreamBase.prototype,{
-	next: function() {
+	error: null
+	,next: function() {
 		return new tink_core__$Future_SyncFuture(new tink_core__$Lazy_LazyConst(tink_streams_Step.Fail(this.error)));
 	}
 	,forEach: function(handler) {
@@ -5696,7 +6895,9 @@ var tink_streams_IdealizeStream = function(target,rescue) {
 tink_streams_IdealizeStream.__name__ = true;
 tink_streams_IdealizeStream.__super__ = tink_streams_IdealStreamBase;
 tink_streams_IdealizeStream.prototype = $extend(tink_streams_IdealStreamBase.prototype,{
-	get_depleted: function() {
+	target: null
+	,rescue: null
+	,get_depleted: function() {
 		return this.target.get_depleted();
 	}
 	,next: function() {
@@ -5747,7 +6948,8 @@ var tink_streams_Single = function(value) {
 tink_streams_Single.__name__ = true;
 tink_streams_Single.__super__ = tink_streams_StreamBase;
 tink_streams_Single.prototype = $extend(tink_streams_StreamBase.prototype,{
-	next: function() {
+	value: null
+	,next: function() {
 		return new tink_core__$Future_SyncFuture(new tink_core__$Lazy_LazyConst(tink_streams_Step.Link(this.value.get(),tink_streams_Empty.inst)));
 	}
 	,forEach: function(handle) {
@@ -5856,7 +7058,8 @@ var tink_streams_FutureStream = function(f) {
 tink_streams_FutureStream.__name__ = true;
 tink_streams_FutureStream.__super__ = tink_streams_StreamBase;
 tink_streams_FutureStream.prototype = $extend(tink_streams_StreamBase.prototype,{
-	next: function() {
+	f: null
+	,next: function() {
 		var ret = this.f.flatMap(function(s) {
 			return s.next();
 		});
@@ -5956,6 +7159,7 @@ var Bool = Boolean;
 var Class = { };
 var Enum = { };
 haxe_ds_ObjectMap.count = 0;
+var __map_reserved = {};
 Object.defineProperty(js__$Boot_HaxeError.prototype,"message",{ get : function() {
 	return String(this.val);
 }});
@@ -5963,6 +7167,61 @@ js_Boot.__toStr = ({ }).toString;
 if(ArrayBuffer.prototype.slice == null) {
 	ArrayBuffer.prototype.slice = js_lib__$ArrayBuffer_ArrayBufferCompat.sliceImpl;
 }
+mustache_Writer.entityMap = (function($this) {
+	var $r;
+	var _g = new haxe_ds_StringMap();
+	if(__map_reserved["&"] != null) {
+		_g.setReserved("&","&amp;");
+	} else {
+		_g.h["&"] = "&amp;";
+	}
+	if(__map_reserved["<"] != null) {
+		_g.setReserved("<","&lt;");
+	} else {
+		_g.h["<"] = "&lt;";
+	}
+	if(__map_reserved[">"] != null) {
+		_g.setReserved(">","&gt;");
+	} else {
+		_g.h[">"] = "&gt;";
+	}
+	if(__map_reserved["\""] != null) {
+		_g.setReserved("\"","&quot;");
+	} else {
+		_g.h["\""] = "&quot;";
+	}
+	if(__map_reserved["'"] != null) {
+		_g.setReserved("'","&#39;");
+	} else {
+		_g.h["'"] = "&#39;";
+	}
+	if(__map_reserved["/"] != null) {
+		_g.setReserved("/","&#x2F;");
+	} else {
+		_g.h["/"] = "&#x2F;";
+	}
+	if(__map_reserved["`"] != null) {
+		_g.setReserved("`","&#x60;");
+	} else {
+		_g.h["`"] = "&#x60;";
+	}
+	if(__map_reserved["="] != null) {
+		_g.setReserved("=","&#x3D;");
+	} else {
+		_g.h["="] = "&#x3D;";
+	}
+	$r = _g;
+	return $r;
+}(this));
+mustache_Writer.escapeRe = new EReg("[&<>\"'`=/]","g");
+Mustache.tags = ["{{","}}"];
+Mustache.defaultWriter = new mustache_Writer();
+mustache_Parser.escapeRegExpRe = new EReg("[\\-\\[\\]{}()*+?.,\\\\\\^$|#\\s]","g");
+mustache_Parser.tagRe = new EReg("#|\\^|/|>|\\{|&|=|<|\\$|!","");
+mustache_Parser.whiteRe = new EReg("\\s*","");
+mustache_Parser.spaceRe = new EReg("\\s+","");
+mustache_Parser.equalsRe = new EReg("\\s*=","");
+mustache_Parser.curlyRe = new EReg("\\s*\\}","");
 tink__$Chunk_EmptyChunk.EMPTY = new haxe_io_Bytes(new ArrayBuffer(0));
 tink__$Chunk_Chunk_$Impl_$.EMPTY = new tink__$Chunk_EmptyChunk();
 tink__$Stringly_Stringly_$Impl_$.SUPPORTED_DATE_REGEX = new EReg("^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})(\\.\\d{3})?(Z|[\\+-]\\d{2}:\\d{2})$","");
