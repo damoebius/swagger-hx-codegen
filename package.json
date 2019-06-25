@@ -4,7 +4,7 @@
   "description": "",
   "main": "cmd.js",
   "scripts": {
-    "test": "haxe build.hxml && node cmd.js -swagger swagger.json -className Api"
+    "test": "haxe build.hxml && node --inspect cmd.js -swagger swagger.json -className Api"
   },
   "repository": {
     "type": "git",

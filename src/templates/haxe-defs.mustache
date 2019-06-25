@@ -1,0 +1,11 @@
+{{#description}}
+/**
+* {{description}}
+*/
+{{/description}}
+typedef {{name}} = {
+{{#props}}
+    {{#optionnal}}@:optional {{/optionnal}}var {{name}}:{{&type}};
+{{/props}}
+}
+

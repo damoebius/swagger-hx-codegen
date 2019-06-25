@@ -1,28 +1,23 @@
-{{#imports}}
-/// <reference path="{{&.}}" />
-{{/imports}}
-
 package;
 
 import tink.http.containers.*;
 import tink.http.Response;
 import tink.web.routing.*;
 
-{{#definitions}}
-type {{&name}} = {{#tsType}}{{> type}}{{/tsType}};
-{{/definitions}}
-
 /**
  * {{&description}}
  * @class {{&className}}
  * @param {(string)} [domainOrOptions] - The project domain.
  */
-class {{&className}} {
+class {{className}} {
 
     public function new() {}
 
 {{#methods}}
     {{> method}}
-
 {{/methods}}
 }
+
+{{#definitions}}
+    {{> typeTemplate}}
+{{/definitions}}

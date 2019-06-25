@@ -8,7 +8,7 @@ interface Swagger extends Spec {
     @:optional public var consumes:Array<String>;
     @:optional public var produces:Array<String>;
     public var paths:Dynamic<Path>;
-    @:optional public var definitions:Dynamic;
+    @:optional public var definitions:Dynamic<Schema>;
     @:optional public var parameters:Dynamic;
     @:optional public var responses:Dynamic;
     @:optional public var security:Array<Security>;
@@ -55,26 +55,26 @@ interface Response {
 }
 
 interface BaseSchema {
-      @:optional public var title: String;
-      @:optional public var description: String;
-      @:optional public var multipleOf: Float;
-      @:optional public var maximum: Float;
-      @:optional public var exclusiveMaximum: Float;
-      @:optional public var minimum: Float;
-      @:optional public var exclusiveMinimum: Float;
-      @:optional public var maxLength: Float;
-      @:optional public var minLength: Float;
-      @:optional public var pattern: String;
-      @:optional public var maxItems: Float;
-      @:optional public var minItems: Float;
-      @:optional public var uniqueItems: Bool;
-      @:optional public var maxProperties: Float;
-      @:optional public var minProperties: Float;
-      @:optional public var items: BaseSchema;
-    }
+    @:optional public var type: DataType;
+    @:optional public var title: String;
+    @:optional public var description: String;
+    @:optional public var multipleOf: Float;
+    @:optional public var maximum: Float;
+    @:optional public var exclusiveMaximum: Float;
+    @:optional public var minimum: Float;
+    @:optional public var exclusiveMinimum: Float;
+    @:optional public var maxLength: Float;
+    @:optional public var minLength: Float;
+    @:optional public var pattern: String;
+    @:optional public var maxItems: Float;
+    @:optional public var minItems: Float;
+    @:optional public var uniqueItems: Bool;
+    @:optional public var maxProperties: Float;
+    @:optional public var minProperties: Float;
+    @:optional public var items: BaseSchema;
+}
 
     interface Schema extends BaseSchema {
-      @:optional public var type: DataType;
       @:optional public var format: DataFormat;
       @:optional public var allOf: Array<Schema>;
       @:optional public var additionalProperties: Any;
@@ -89,7 +89,6 @@ interface BaseSchema {
 
 interface Header extends BaseSchema{
     @:optional public var format: String;
-    @:optional public var type: String;
 }
 
 interface XML {
@@ -154,7 +153,6 @@ interface BaseParameter extends BaseSchema {
     @:optional public var required: Bool;
     public var description: String;
     public var schema: Schema;
-    public var type: DataType;
     @:optional public var format: DataFormat;
 }
 
@@ -207,9 +205,9 @@ enum abstract DataFormat(String) {
 
 enum abstract DataType(String) {
     var integer;
-    var Float;
+    var number;
     var boolean;
-    var String;
+    var string;
     var array;
     var object;
 }
