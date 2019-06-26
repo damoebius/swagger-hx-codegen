@@ -47,36 +47,26 @@ class CodeGen {
             definitions: []
         };
 
+        // Paths
         var paths = Reflect.fields(swagger.paths);
         for (pathName in paths) {
             var api:Path = Reflect.getProperty(swagger.paths, pathName);
             var operations = Reflect.fields(api);
             for (operationName in operations) {
                 var op:Operation = Reflect.getProperty(api, operationName);
-                var secureTypes = [];
-                if (swagger.securityDefinitions != null || op.security != null) {
-                    var mergedSecurity = [].concat(swagger.security).concat(op.security).map(function(security) { return Reflect.fields(security); });
-                    if (swagger.securityDefinitions != null) {
-                        var securDef = Reflect.fields(swagger.securityDefinitions);
-                        for (sk in securDef) {
-                            if (mergedSecurity.join(',').indexOf(sk) != -1) {
-                                secureTypes.push(Reflect.getProperty(swagger.securityDefinitions, sk).type);
-                            }
-                        }
-                    }
-                }
+                var method = new Method(operationName, op.summary, op.description, pathName, op.operationId);
+                data.methods.push(method);
             }
-
-
         }
 
-
+        // TypeDef
         var defs = Reflect.fields(swagger.definitions);
         for (defName in defs) {
             var definition:Schema = Reflect.getProperty(swagger.definitions, defName);
             data.definitions.push(new Definition(defName, definition));
         }
 
+        //
 
         return new Context(data);
     }
@@ -151,5 +141,24 @@ class Convert {
         }
         return result;
     }
+
+}
+
+class Method {
+
+    public var verb:String;
+    public var summary:String;
+    public var description:String;
+    public var path:String;
+    public var operationId:String;
+
+    public function new(verb:String, summary:String, description:String, path:String, operationId:String) {
+        this.verb = verb;
+        this.summary = summary;
+        this.description = description;
+        this.path = path;
+        this.operationId = operationId;
+    }
+
 
 }

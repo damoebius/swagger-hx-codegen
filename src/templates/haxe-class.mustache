@@ -13,9 +13,10 @@ class {{className}} {
 
     public function new() {}
 
-{{#methods}}
-    {{> method}}
-{{/methods}}
+    {{#methods}}
+        {{> methodTemplate}}
+
+    {{/methods}}
 }
 
 {{#definitions}}
