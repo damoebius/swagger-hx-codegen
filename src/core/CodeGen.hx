@@ -141,6 +141,13 @@ class Convert {
             case DataType.object : result = "Any";
             case DataType.string : result = "String";
             case DataType.array : result = "Array<" + getHaxeType(value.items) + ">";
+            case null : result = null;
+        }
+        if(result == null){
+            var ref:String = Reflect.getProperty(value,"$ref");
+            if(ref != null){
+                result = ref.split('/').pop();
+            }
         }
         return result;
     }
