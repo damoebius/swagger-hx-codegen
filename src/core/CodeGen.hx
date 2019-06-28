@@ -1,5 +1,6 @@
 package core;
 
+import core.Swagger.BaseParameter;
 import core.Swagger.BaseSchema;
 import core.Swagger.DataType;
 import core.Swagger.Operation;
@@ -54,7 +55,13 @@ class CodeGen {
             var operations = Reflect.fields(api);
             for (operationName in operations) {
                 var op:Operation = Reflect.getProperty(api, operationName);
-                var method = new Method(operationName, op.summary, op.description, pathName, op.operationId);
+                pathName = StringTools.replace(pathName,"{","$");
+                pathName = StringTools.replace(pathName,"}","");
+                var params = new Array<RequestParameter>();
+                for(param in op.parameters){
+                    params.push( new RequestParameter(param.name,Convert.getHaxeTypeByParameter(param),param.required));
+                }
+                var method = new Method(operationName, op.summary, op.description, pathName, op.operationId,params,"");
                 data.methods.push(method);
             }
         }
@@ -142,6 +149,15 @@ class Convert {
         return result;
     }
 
+    public static function getHaxeTypeByParameter(value:BaseParameter):String {
+        var result = getHaxeType(value);
+        if(result == null && value.schema != null){
+            trace(value.schema);
+            result = getHaxeType(value.schema);
+        }
+        return result;
+    }
+
 }
 
 class Method {
@@ -151,14 +167,37 @@ class Method {
     public var description:String;
     public var path:String;
     public var operationId:String;
+    public var requestParameters:String= "";
+    public var responseType:String;
 
-    public function new(verb:String, summary:String, description:String, path:String, operationId:String) {
+    public function new(verb:String, summary:String, description:String, path:String, operationId:String, requestParameters:Array<RequestParameter>, responseType:String) {
         this.verb = verb;
         this.summary = summary;
         this.description = description;
         this.path = path;
         this.operationId = operationId;
+        this.responseType = responseType;
+        for(param in requestParameters) {
+            if(this.requestParameters != ""){
+                this.requestParameters += ",";
+            }
+            this.requestParameters += param.name + ":" + param.type;
+
+        }
     }
 
+
+}
+
+class RequestParameter {
+    public var name:String;
+    public var type:String;
+    public var required:Bool = true;
+
+    public function new(name:String, type:String, required:Bool) {
+        this.name = name;
+        this.type = type;
+        this.required = required;
+    }
 
 }
