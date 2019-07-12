@@ -1,5 +1,6 @@
 package core;
 
+import core.Swagger.Response;
 import core.Swagger.BaseParameter;
 import core.Swagger.BaseSchema;
 import core.Swagger.DataType;
@@ -61,7 +62,12 @@ class CodeGen {
                 for(param in op.parameters){
                     params.push( new RequestParameter(param.name,Convert.getHaxeTypeByParameter(param),param.required));
                 }
-                var method = new Method(operationName, op.summary, op.description, pathName, op.operationId,params,"");
+                var returnType = "Void";
+                if(op.responses != null && Reflect.hasField(op.responses,"200")){
+                    var response:Response = Reflect.getProperty(op.responses,"200");
+                    returnType = Convert.getHaxeType(response.schema);
+                }
+                var method = new Method(operationName, op.summary, op.description, pathName, op.operationId,params,returnType);
                 data.methods.push(method);
             }
         }
@@ -152,7 +158,6 @@ class Convert {
     public static function getHaxeTypeByParameter(value:BaseParameter):String {
         var result = getHaxeType(value);
         if(result == null && value.schema != null){
-            trace(value.schema);
             result = getHaxeType(value.schema);
         }
         return result;
@@ -168,7 +173,7 @@ class Method {
     public var path:String;
     public var operationId:String;
     public var requestParameters:String= "";
-    public var responseType:String;
+    public var responseType:String="Void";
 
     public function new(verb:String, summary:String, description:String, path:String, operationId:String, requestParameters:Array<RequestParameter>, responseType:String) {
         this.verb = verb;
